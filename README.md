@@ -15,7 +15,7 @@ conda install -c huggingface -c conda-forge datasets -y
 conda install -c intel scikit-learn -y
 conda install -c anaconda seaborn -y
 
-pip install psutil wget paramiko
+pip install psutil wget paramiko accelerate nvidia-ml-py3
 
 
 
