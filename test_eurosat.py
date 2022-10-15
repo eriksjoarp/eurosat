@@ -13,7 +13,30 @@ Look into contrastive labeling
 Make json config for training
 Make json config for evaluation
 
+ConfusionMatrix
+
+Automatiskt hyper_parameter_search:
+    k-fold cross validation,    split data once more
+
+Augment: Tiny, small        one of each, then combine 2 or three in random order
+RandAugment
+ColorJitter
+RandomRotation(90)
+RandomPerspective
+RandomHorizontalFlip
+RandomResizedCrop
+
+lr: 5 olika
+WEIGHT_DECAY:
+Batch_size total with lr:
+adam_beta1
+adam_beta2
+adam_epsilon
+lr_scheduler_type
+optim
+
 '''
+
 
 import os,sys
 from ai_helper import constants_dataset as c_d
@@ -23,14 +46,23 @@ from ai_helper import dataset_load_helper
 from ai_helper import torch_help_functions
 
 from helper import  erik_functions_files
+import eurosat_helper
+import matplotlib.pyplot as plt
 
 from transformers import AutoFeatureExtractor, SwinForImageClassification
 from datasets import load_dataset, load_metric
 from transformers import AutoModelForImageClassification, TrainingArguments, Trainer, Swinv2ForImageClassification
-from sklearn.metrics import precision_recall_fscore_support, accuracy_score
+from sklearn.metrics import precision_recall_fscore_support, accuracy_score, confusion_matrix
+from sklearn.linear_model import LogisticRegression
+import seaborn as sns
+
 import torch, torchvision
 from PIL import Image
 import requests
+import time
+
+from ai_helper import constants_ai_h as c_ai
+
 
 from torchvision.transforms import (
     CenterCrop,
@@ -39,9 +71,38 @@ from torchvision.transforms import (
     RandomHorizontalFlip,
     RandomResizedCrop,
     RandAugment,
+    AutoAugment,
+    ColorJitter,
+    RandomPerspective,
+    RandomRotation,
     Resize,
     ToTensor,
 )
+
+
+# ToDo
+def params_swin():
+    params_swin_dict = {}
+
+    # project
+    # training_args
+    # training
+
+
+def conf_matrix(y, y_pred, show_matrix=False):
+    #y_pred = logreg.predict(X)  # Get the confusion matrix
+    cf_matrix = confusion_matrix(y, y_pred)
+    fig, ax = plt.subplots(figsize=(15, 10))
+    svm = sns.heatmap(cf_matrix, linewidths=1, annot=True, ax=ax, fmt='g')
+    if show_matrix:
+        plt.show()
+    else:
+        print(cf_matrix)
+    save_filename = dataset_load_helper.get_filename_unique('figs', 'confusion_matrix_.png')
+    plt.savefig(save_filename)
+    #svm.savefig(save_filename, dpi=400)
+
+
 
 
 def trainer_get(training_args):
@@ -51,11 +112,10 @@ def trainer_get(training_args):
         train_dataset=dataset[c_d.DATASET_TRAIN],
         eval_dataset=dataset[c_d.DATASET_VAL],
         tokenizer=feature_extractor,
-        compute_metrics=compute_metrics,
+        compute_metrics=compute_metrics_train,
         data_collator=collate_fn,
     )
     return trainer
-
 
 
 def load_swin_model():
@@ -65,6 +125,7 @@ def load_swin_model():
         MODEL_CHECKPOINT,
         label2id=label2id,
         id2label=id2label,
+        #use_auth_token=,           # huggingface login
         ignore_mismatched_sizes=True,
         # provide this in case you're planning to fine-tune an already fine-tuned checkpoint
     )
@@ -86,23 +147,31 @@ def training_args_get():
         num_train_epochs=EPOCHS,
         dataloader_num_workers=DATALOADER_NUM_WORKERS,
         warmup_ratio=WARMUP_RATIO,
+        #weight_decay=WEIGHT_DECAY,
         logging_steps=10,
         load_best_model_at_end=True,
         metric_for_best_model="accuracy",
         push_to_hub=PUSH_TO_HUB,
-        fp16=True,
+        seed=1973,
+        bf16=True,
+        #gradient_checkpointing=True,       # super slow
+        #auto_find_batch_size=True,         # is used with pip install accelerate
+        #hub_token=,                        # when push to hub
     )
     return train_args
+
 
 
 def transforms_train_eurosat(feature_extractor):
     train_transforms = Compose(
         [
-            #Resize(feature_extractor.size),
+            Resize(feature_extractor.size),
             #Resize(320),
-            RandomResizedCrop(feature_extractor.size),
+            #RandomResizedCrop(feature_extractor.size),
             #RandomResizedCrop(256),
-            RandomHorizontalFlip(),
+            #RandomHorizontalFlip(),
+            #RandAugment(),
+            CenterCrop(feature_extractor.size),
             ToTensor(),
             normalize,
         ]
@@ -122,26 +191,18 @@ def transforms_val_eurosat():
     return val_transforms
 
 
-def create_data_dir(data_dir):
-    not_created_dir = True
-    counter = 1
-    check_if_exists_dir = data_dir
-    while not_created_dir:
-        if not(os.path.isdir(check_if_exists_dir)):
-            not_created_dir = False
-        else:
-            counter += 1
-            check_if_exists_dir = data_dir + '_' + str(counter)
-    return check_if_exists_dir
-
-# ToDo
-def swin_json_load(path_config):
-    swin_config = 0
-    return swin_config
-
-# ToDo
-def swin_json_dump(config, path_config):
-    pass
+def compute_metrics_train(pred):
+    labels = pred.label_ids
+    preds = pred.predictions.argmax(-1)
+    precision, recall, f1, _ = precision_recall_fscore_support(labels, preds, average='weighted')
+    acc = accuracy_score(labels, preds)
+    conf_matrix(labels, preds, show_matrix=False)
+    return {
+        'accuracy': acc,
+        'f1': f1,
+        'precision': precision,
+        'recall': recall
+    }
 
 
 #  used to batch examples together. Each batch consists of 2 keys, namely pixel_values and labels
@@ -149,18 +210,6 @@ def collate_fn(examples):
     pixel_values = torch.stack([example["pixel_values"] for example in examples])
     labels = torch.tensor([example["label"] for example in examples])
     return {"pixel_values": pixel_values, "labels": labels}
-
-def compute_metrics(pred):
-    labels = pred.label_ids
-    preds = pred.predictions.argmax(-1)
-    precision, recall, f1, _ = precision_recall_fscore_support(labels, preds, average='weighted')
-    acc = accuracy_score(labels, preds)
-    return {
-        'accuracy': acc,
-        'f1': f1,
-        'precision': precision,
-        'recall': recall
-    }
 
 def preprocess_train(example_batch):
     """Apply train_transforms across a batch."""
@@ -174,41 +223,73 @@ def preprocess_val(example_batch):
         val_transforms(image.convert("RGB")) for image in example_batch["image"]]
     return example_batch
 
-CUDA_LAUNCH_BLOCKING=1
-MODEL_CHECKPOINT = r'microsoft/swinv2-tiny-patch4-window8-256'
+
+
+#CUDA_LAUNCH_BLOCKING=1
+'''
+MODEL_CHECKPOINT = r'microsoft/swinv2-small-patch4-window8-256'
+feature_extractor = AutoFeatureExtractor.from_pretrained(MODEL_CHECKPOINT)
+normalize = Normalize(mean=feature_extractor.image_mean, std=feature_extractor.image_std)
+train_transforms = transforms_train_eurosat(feature_extractor)
+val_transforms = transforms_val_eurosat()
+'''
+
+###################################         parameters          ###################################
+
+#MODEL_CHECKPOINT = r'microsoft/swinv2-tiny-patch4-window8-256'
+MODEL_CHECKPOINT = r'microsoft/swinv2-tiny-patch4-window16-256'
+
+#MODEL_CHECKPOINT = r'microsoft/swinv2-small-patch4-window8-256'
+#MODEL_CHECKPOINT = r'microsoft/swinv2-small-patch4-window16-256'
+
+#MODEL_CHECKPOINT = r'microsoft/swinv2-base-patch4-window8-256'
+#MODEL_CHECKPOINT = r'microsoft/swinv2-base-patch4-window16-256'
+#MODEL_CHECKPOINT = r'microsoft/swinv2-base-patch4-window12-192-22k'
+#MODEL_CHECKPOINT = r'microsoft/swinv2-base-patch4-window12to16-192to256-22kto1k-ft'
+
+#MODEL_CHECKPOINT = r'microsoft/swinv2-large-patch4-window12-192-22k'
+#MODEL_CHECKPOINT = r'microsoft/swinv2-large-patch4-window12to16-192to256-22kto1k-ft'
+
 feature_extractor = AutoFeatureExtractor.from_pretrained(MODEL_CHECKPOINT)
 normalize = Normalize(mean=feature_extractor.image_mean, std=feature_extractor.image_std)
 train_transforms = transforms_train_eurosat(feature_extractor)
 val_transforms = transforms_val_eurosat()
 
 
-###################################         parameters          ###################################
-
 if __name__=='__main__':
-
-    MODEL_CHECKPOINT = r'microsoft/swinv2-tiny-patch4-window8-256'
+    # CUDA_LAUNCH_BLOCKING=1
 
     MODEL_NAME = MODEL_CHECKPOINT.split("/")[-1]
     DIR_MODEL_CACHE = c_d.DIR_MODEL_CACHE
 
-    MODEL_NAME_TRAINED = MODEL_NAME + '''-finetuned-eurosat'''
+    #   do autoaugment, colorjitter, RandAugment
+    EPOCHS = 1  # default 3
+    lr = 2e-4  # default 5e-5 on batch size 32
+    WEIGHT_DECAY = 0
+
+    MODEL_ENDING = 'rgb-baseline_' + str(EPOCHS) + 'e_' + str(lr) + 'lr_' + str(WEIGHT_DECAY) + 'wd_'
+    MODEL_NAME_TRAINED = MODEL_NAME + '''-finetuned-eurosat-''' + MODEL_ENDING
+
     DIR_TRAINING_DATA = os.path.join(constants_ai_h.DIR_EXPERIMENTS_SWIN, MODEL_NAME_TRAINED)
 
     DATA_DIR = c_d.DIR_DATASET_EUROSAT_RGB
-    TEST_SIZE = 0.1
+    DATASET_SMALL = c_d.DATASET_SMALL
+    #DATASET_SMALL = False
 
-    EPOCHS = 3            # default 3
-    WARMUP_RATIO = 0.25   # default 0.1
-    BATCH_SIZE = 64       # default 32
-    lr = 2e-4             # default 5e-5 on batch size 32
+    BATCH_SIZE = dataset_load_helper.get_batchsize(MODEL_NAME_TRAINED)
+
+    WARMUP_RATIO = 0.25         # default 0.1
+    #BATCH_SIZE = 32             # default 32
     PUSH_TO_HUB = False
     TRAINER_PUSH_TO_HUB = False
-    GRADIENT_ACCUMULATION_STEPS = 1
-    DATALOADER_NUM_WORKERS = 2
+    GRADIENT_ACCUMULATION_STEPS = int(160 / 2 / BATCH_SIZE)     # BATCH_SIZE * GPUs * GRAD_ACC = 128
 
+    DATALOADER_NUM_WORKERS = 2
+    #WEIGHT_DECAY = 0.002
+    TEST_SIZE = 0.1
 
     words = MODEL_CHECKPOINT.split('/')
-    SAVE_DATA_DIR = create_data_dir(DIR_TRAINING_DATA)
+    SAVE_DATA_DIR = dataset_load_helper.create_data_dir(DIR_TRAINING_DATA)
     print('DIR_TRAINING_DATA : ' + SAVE_DATA_DIR)
 
     ###################################################################################################
@@ -217,39 +298,17 @@ if __name__=='__main__':
     torch_help_functions.is_cuda_available()
 
     # create feature_extractor
-    feature_extractor = AutoFeatureExtractor.from_pretrained(MODEL_CHECKPOINT)
+    #feature_extractor = AutoFeatureExtractor.from_pretrained(MODEL_CHECKPOINT)
 
     #   preprocessing the data
-    normalize = Normalize(mean=feature_extractor.image_mean, std=feature_extractor.image_std)
+    #normalize = Normalize(mean=feature_extractor.image_mean, std=feature_extractor.image_std)
 
     # load dataset
     #dataset = load_dataset(DIR_DATASET, data_files="https://madm.dfki.de/files/sentinel/EuroSAT.zip", cache_dir=DIR_MODEL_CACHE)
-    train_transforms = transforms_train_eurosat(feature_extractor)
-    val_transforms = transforms_val_eurosat()
+    #def dataset_load_from_imagefolder(dir_dataset_base, dataset_small=False):
 
-    train_dir_split, val_dir_split, test_dir_split = dataset_load_helper.dataset_dirs_from_base(DATA_DIR, small=False)
-    print(train_dir_split, val_dir_split, test_dir_split)
-
-    #ds_train = torchvision.datasets.ImageFolder(train_dir_split,transform=train_transforms) #ToDo use transforms look into when and where to preprocess, transform, augment
-    #ds_val = torchvision.datasets.ImageFolder(train_dir_split) #,transform=) ToDo use transforms look into when and where to preprocess, transform, augment
-    #ds_test = torchvision.datasets.ImageFolder(train_dir_split) #,transform=) ToDo use transforms look into when and where to preprocess, transform, augment
-
-    train_paths = dataset_load_helper.flatten_dirs_to_list(train_dir_split)
-    val_paths = dataset_load_helper.flatten_dirs_to_list(val_dir_split)
-    test_paths = dataset_load_helper.flatten_dirs_to_list(test_dir_split)
-
-    #dataset = load_dataset("imagefolder", data_files={"train": ["path/to/file1", "path/to/file2"], "test": ["path/to/file3", "path/to/file4"]})
-    dataset = load_dataset("imagefolder", data_files={"train": train_paths, "test": test_paths, "val": val_paths}, cache_dir=c_d.DIR_DATASET_CACHE)
-
-
-    # split up training into training + validation      USED when loading from hub
-    #splits = dataset["train"].train_test_split(test_size=TEST_SIZE)
-    #train_ds = splits['train']
-    #val_ds = splits['test']
-
-    #train_transforms = transforms_train_eurosat(feature_extractor)
-    #val_transforms = transforms_val_eurosat()
-
+    #dataset = dataset_load.dataset_load_from_imagefolder(DATA_DIR, '_medium')
+    dataset = dataset_load.dataset_load_from_imagefolder(DATA_DIR, dataset_small=DATASET_SMALL)
     print(feature_extractor.size , 'feature_extractor.size')
 
     # preprocess datasets
@@ -264,15 +323,16 @@ if __name__=='__main__':
 
     metric = load_metric("accuracy")
 
-
     label2id, id2label = dict(), dict()
     #for i, label in enumerate(dataset["train"].classes):
     #for i, label_ in enumerate(dataset["train"].features["label"]):
-    #for i in range(10):
+
+    #for i in range(10): ToDo try again
     #    label = dataset["train"].features["label"][i]
     #    label2id[label] = i
     #    id2label[i] = label
 
+    # labels = ds['train'].features['label'].names
     classes = ['AnnualCrop', 'Forest', 'HerbaceousVegetation', 'Highway', 'Industrial', 'Pasture', 'PermanentCrop', 'Residential', 'River', 'SeaLake']
     for i, label in enumerate(classes):
         label2id[label] = i
@@ -288,35 +348,49 @@ if __name__=='__main__':
 
     # rest is optional but nice to have
     dir_save_model = os.path.join(c_d.DIR_MODELS_SAVED_SWIN, MODEL_NAME_TRAINED)
+    dir_eval = os.path.join(dir_save_model, 'eval')
+    #os.makedirs(dir_eval, exist_ok=True)
+    #os.makedirs(dir_save_model, exist_ok=True)
 
-    # ToDo update directorys
     trainer.save_model(dir_save_model)
-    trainer.log_metrics("train", metrics=train_results.metrics)
-    trainer.save_metrics("train", metrics=train_results.metrics)
+    trainer.log_metrics(dir_save_model, metrics=train_results.metrics)
+    trainer.save_metrics(dir_save_model, metrics=train_results.metrics)
     trainer.save_state()
 
     metrics = trainer.evaluate()
-    # some nice to haves:
-    trainer.log_metrics("eval", metrics=metrics)
-    trainer.save_metrics("eval", metrics=metrics)
+    trainer.log_metrics(dir_eval, metrics=metrics)
+    trainer.save_metrics(dir_eval, metrics=metrics)
 
     if TRAINER_PUSH_TO_HUB:
         trainer.push_to_hub()
 
+    print('DIR_TRAINING_DATA  ' + DIR_TRAINING_DATA)
+
+    print('dir_save_model  ' + dir_save_model)
+    print('dir_eval  ' + dir_eval)
+
+    training_args.do_train = False
+
+    # move confusion matrix pngs to traindir
+    dir_conf_matrix = os.path.join(dir_save_model, 'figs')
+    erik_functions_files.copy_files_path('figs', dir_conf_matrix, delete_old=True)
+
+
+    exit(0)
+
+    # confusion matrix
+
+    #logreg = LogisticRegression(C=1e5)
+    #logreg.fig(X, y)  # Generate predictions with the model using our X values
+    y_pred = logreg.predict(X)  # Get the confusion matrix
+    cf_matrix = confusion_matrix(y, y_pred)
+    print(cf_matrix)
+
+
     # save metrics and data
 
-
     # config eval
-
-
-
-
-
-
-
-
-
-
+    # do_train = False
 
     # visualize data
     #ml_helper_visualization.show_image_grid(images, 4, permutate=False)
@@ -387,60 +461,10 @@ if __name__=='__main__':
                 print(path + '/resized_' + item)
                 imResize.save(path + '/' + item, 'JPEG')
     
+    
     resize()
     
-    
-    
-    # Train and save results
-    train_results = trainer.train()
-    trainer.save_model()
-    trainer.log_metrics("train", train_results.metrics)
-    trainer.save_metrics("train", train_results.metrics)
-    trainer.save_state()
-    
-    # Evaluate on validation set
-    metrics = trainer.evaluate(prepared_ds['validation'])
-    trainer.log_metrics("eval", metrics)
-    trainer.save_metrics("eval", metrics)
-    
-    
-    
-    from transformers import Trainer, TrainingArguments
-    
-    batch_size = 16
-    # Defining training arguments (set push_to_hub to false if you don't want to upload it to HuggingFace's model hub)
-    training_args = TrainingArguments(
-        f"swin-finetuned-food101",
-        remove_unused_columns=False,
-        evaluation_strategy = "epoch",
-        save_strategy = "epoch",
-        learning_rate=5e-5,
-        per_device_train_batch_size=batch_size,
-        gradient_accumulation_steps=4,
-        per_device_eval_batch_size=batch_size,
-        num_train_epochs=3,
-        warmup_ratio=0.1,
-        logging_steps=10,
-        load_best_model_at_end=True,
-        metric_for_best_model="accuracy",
-        push_to_hub=True,
-    )
-    
-    # Instantiate the Trainer object
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        data_collator=collate_fn,
-        compute_metrics=compute_metrics,
-        train_dataset=prepared_ds["train"],
-        eval_dataset=prepared_ds["validation"],
-        tokenizer=feature_extractor,
-    )
-    
-    
-    
-    from transformers import SwinForImageClassification, Trainer, TrainingArguments
-    
+  
     labels = ds['train'].features['label'].names
     
     # initialzing the model
