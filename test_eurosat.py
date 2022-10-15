@@ -263,7 +263,7 @@ if __name__=='__main__':
     DIR_MODEL_CACHE = c_d.DIR_MODEL_CACHE
 
     #   do autoaugment, colorjitter, RandAugment
-    EPOCHS = 1  # default 3
+    EPOCHS = 10  # default 3
     lr = 2e-4  # default 5e-5 on batch size 32
     WEIGHT_DECAY = 0
 
@@ -271,10 +271,11 @@ if __name__=='__main__':
     MODEL_NAME_TRAINED = MODEL_NAME + '''-finetuned-eurosat-''' + MODEL_ENDING
 
     DIR_TRAINING_DATA = os.path.join(constants_ai_h.DIR_EXPERIMENTS_SWIN, MODEL_NAME_TRAINED)
+    DIR_TRAINING_DATA = dataset_load_helper.create_data_dir(DIR_TRAINING_DATA)
 
     DATA_DIR = c_d.DIR_DATASET_EUROSAT_RGB
     DATASET_SMALL = c_d.DATASET_SMALL
-    #DATASET_SMALL = False
+    DATASET_SMALL = False
 
     BATCH_SIZE = dataset_load_helper.get_batchsize(MODEL_NAME_TRAINED)
 
@@ -373,27 +374,10 @@ if __name__=='__main__':
 
     # move confusion matrix pngs to traindir
     dir_conf_matrix = os.path.join(dir_save_model, 'figs')
-    erik_functions_files.copy_files_path('figs', dir_conf_matrix, delete_old=True)
 
+    # def copy_files_path(dir_from, dir_save, delete_old=False):
+    erik_functions_files.copy_files_from_dir_to_dir(constants_ai_h.DIR_LOCAL_FIGS, dir_conf_matrix, delete_old_src=True, delete_old_save=True)
 
-    exit(0)
-
-    # confusion matrix
-
-    #logreg = LogisticRegression(C=1e5)
-    #logreg.fig(X, y)  # Generate predictions with the model using our X values
-    y_pred = logreg.predict(X)  # Get the confusion matrix
-    cf_matrix = confusion_matrix(y, y_pred)
-    print(cf_matrix)
-
-
-    # save metrics and data
-
-    # config eval
-    # do_train = False
-
-    # visualize data
-    #ml_helper_visualization.show_image_grid(images, 4, permutate=False)
 
 
     # prepare data
