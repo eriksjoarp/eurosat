@@ -4,3 +4,5 @@ helper/
 ai_helper/
 ToDo*
 figs*
+test.json
+config_swinv2_base.json_bu
