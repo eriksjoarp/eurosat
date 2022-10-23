@@ -1,0 +1,18 @@
+{
+  "dataset_path_config": "C:/ai_experiments/configs/swin/base_dataset.json",
+  "dataset_path_dataset": "C:/ai/datasets/eurosat/EuroSAT/2750",
+  "dataset_small": false,
+  "dataset_dir_training_data_base": "new",
+  "dataset_dir_training_data": "new",
+  "dataset_max_labels_per_class": 0,
+  "dataset_train_transforms": true,
+  "dataset_train_transforms_resize": true,
+  "dataset_train_transforms_centercrop": true,
+  "dataset_train_transforms_to_tensor": true,
+  "dataset_train_transforms_normalize": true,
+  "dataset_val_transforms": true,
+  "dataset_val_transforms_resize": true,
+  "dataset_val_transforms_centercrop": true,
+  "dataset_val_transforms_to_tensor": true,
+  "dataset_val_transforms_normalize": true
+}
