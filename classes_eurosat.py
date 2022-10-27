@@ -2,30 +2,39 @@
 class for training swin models
 
 ToDo
-conf default for swin_config that is loaded and then changes can be made to it
-json_load config
-create base config json on disk
-
-class training
 class dataset from imagefolder
 class logging
 class eval
 
-clean up classes
+confusion_matrix_training and evaluation : differentiate
+check eval saving metrics etc
 
-automate ablation
+transforms: create ablation easily,
+    sequence of
+    2 out of X randomly
 
+cosine annealing lr
 
+logger
+conf_matrix better colors for smaller values
+
+load_trained wights to continue training or for evaluation
 
 '''
+
 import json
 import os,sys
+import random
+import pandas as pd
+import numpy as np
+
 from ai_helper import constants_dataset as c_d
 from ai_helper import constants_ai_h as c_ai_h
 from ai_helper import dataset_load
 from ai_helper import dataset_load_helper
 from ai_helper import torch_help_functions
 from ai_helper import constants_training as c_t
+from ai_helper import ml_helper_visualization
 
 from helper import  erik_functions_files
 import eurosat_helper
@@ -57,6 +66,8 @@ from torchvision.transforms import (
     ColorJitter,
     RandomPerspective,
     RandomRotation,
+    RandomVerticalFlip,
+    RandomEqualize,
     Resize,
     ToTensor,
 )
@@ -120,7 +131,7 @@ class SwinTraining:
         self.training_args_swin = self.training_args_get()
         self.trainer_swin = self.trainer_get()
 
-        #self.train_results = self.train()       # ToDo move this so the user chooses to do it
+        #self.train_results = self.train()
 
         # evaluate data
 
@@ -148,16 +159,22 @@ class SwinTraining:
 
         if self.c[c_t.S2_MODEL_NAME_TRAINED_PRE_CHOSEN] == 'False':
             _MODEL_ENDING = 'rgb-baseline_' + str(self.c[c_t.S2_TRAIN_ARGS_NUM_TRAIN_EPOCHS]) + 'e_' + str(self.c[c_t.S2_TRAIN_ARGS_LR]) + \
-                            'lr_' + str(self.c[c_t.S2_TRAIN_ARGS_WEIGHT_DECAY]) + 'wd'
+                            'lr_' + str(self.c[c_t.S2_TRAIN_ARGS_WEIGHT_DECAY]) + 'wd_resize-256_' + str(random.randint(0,1000))
             self.c[c_t.S2_MODEL_NAME_TRAINED] = self.c[c_t.S2_MODEL_NAME] + '''-finetuned-eurosat-''' + _MODEL_ENDING
         else:
             self.c[c_t.S2_MODEL_NAME_TRAINED] = self.c[c_t.S2_MODEL_NAME_TRAINED_PRE_CHOSEN]
 
-        # retrieve batch sizes to use
-        self.c[c_t.S2_TRAIN_ARGS_PER_DEVICE_TRAIN_BATCH_SIZE] = dataset_load_helper.get_batchsize(self.c[c_t.S2_MODEL_NAME_TRAINED])
-        self.c[c_t.S2_TRAIN_ARGS_PER_DEVICE_EVAL_BATCH_SIZE] = self.c[c_t.S2_TRAIN_ARGS_PER_DEVICE_TRAIN_BATCH_SIZE]
+        self.classes = ['AnnualCrop', 'Forest', 'HerbaceousVegetation', 'Highway', 'Industrial',
+                        'Pasture', 'PermanentCrop', 'Residential', 'River', 'SeaLake']
 
-        self.c_d[c_t.DATASET_DIR_TRAINING_DATA_BASE] = os.path.join(c_ai_h.DIR_EXPERIMENTS_SWIN, self.c[c_t.S2_MODEL_NAME_TRAINED])
+        self._dir_save_model = os.path.join(c_d.DIR_MODELS_SAVED_SWIN, self.c[c_t.S2_MODEL_NAME_TRAINED], 'figs')
+        os.makedirs(self._dir_save_model, exist_ok=True)
+
+        # retrieve batch sizes to use ToDo fix if needed
+        #self.c[c_t.S2_TRAIN_ARGS_PER_DEVICE_TRAIN_BATCH_SIZE] = dataset_load_helper.get_batchsize(self.c[c_t.S2_MODEL_NAME_TRAINED])
+        #self.c[c_t.S2_TRAIN_ARGS_PER_DEVICE_EVAL_BATCH_SIZE] = self.c[c_t.S2_TRAIN_ARGS_PER_DEVICE_TRAIN_BATCH_SIZE]
+
+        self.c_d[c_t.DATASET_DIR_TRAINING_DATA_BASE] = os.path.join(c_ai_h.DIR_EXPERIMENTS_SWIN_LARGE, self.c[c_t.S2_MODEL_NAME_TRAINED])
 
         # ToDo probably wrong, what should it be? ERROR
         #self.c_d[c_t.DATASET_DIR_TRAINING_DATA] = dataset_load_helper.create_data_dir(self.c_d[c_t.DATASET_DIR_TRAINING_DATA_BASE])           # create unique directory
@@ -176,18 +193,13 @@ class SwinTraining:
         return _feature_extractor
 
     # calculate confusion matrix
-    def conf_matrix(self, y, y_pred, show_matrix=False, save_matrix=True):
-        # y_pred = logreg.predict(X)  # Get the confusion matrix
-        cf_matrix = confusion_matrix(y, y_pred)
-        fig, ax = plt.subplots(figsize=(15, 10))
-        sns_plot = sns.heatmap(cf_matrix, linewidths=1, annot=True, ax=ax, fmt='g')
-        if show_matrix:
-            plt.show()
-        else:
-            print(cf_matrix)
-        if save_matrix:
-            _save_filename = dataset_load_helper.get_filename_unique('figs', 'confusion_matrix_')
-            plt.savefig(_save_filename)
+    def conf_matrix(self, y, y_pred, show_matrix=False, save_matrix=True, do_corr_matrix=True):
+        #def conf_matrix(y, y_pred, path_save, filename_save, show_matrix=False, save_matrix=True, x_labels=None, y_labels=None, do_corr_matrix=True):
+        conf_matrix = ml_helper_visualization.conf_matrix(y=y, y_pred=y_pred, path_save=self._dir_save_model, filename_save='confusion_matrix_.png', show_matrix=show_matrix,
+                                                          save_matrix=save_matrix, x_labels=self.classes, y_labels=self.classes, do_corr_matrix=False)
+        corr_matrix = ml_helper_visualization.conf_matrix(y=y, y_pred=y_pred, path_save=self._dir_save_model, filename_save='corr_matrix_.png', show_matrix=show_matrix,
+                                                          save_matrix=save_matrix, x_labels=self.classes, y_labels=self.classes, do_corr_matrix=True)
+        return conf_matrix, corr_matrix
 
 
     # define the huggingface trainer
@@ -251,11 +263,18 @@ class SwinTraining:
         _train_transforms = Compose(
             [
                 Resize(self.feature_extractor.size),
-                # Resize(320),
+                #Resize(320),
                 # RandomResizedCrop(feature_extractor.size),
                 # RandomResizedCrop(256),
-                # RandomHorizontalFlip(),
+                #RandomHorizontalFlip(),
+                #RandomVerticalFlip(),
                 # RandAugment(),
+                # AutoAugment,
+                # ColorJitter,
+                #RandomPerspective,
+                RandomRotation(30),
+                RandomVerticalFlip(),
+                #RandomEqualize,
                 CenterCrop(self.feature_extractor.size),
                 ToTensor(),
                 self.normalize,
@@ -312,27 +331,11 @@ class SwinTraining:
         _normalize = Normalize(mean=self.feature_extractor.image_mean, std=self.feature_extractor.image_std)
         return _normalize
 
-    '''
-    # ToDo load the json_config with training values
-    def swin_json_load(self):
-        if erik_functions_files.json_load(self.config_path):
-            print('Fatal ERROR, cannot load json, aborting : ' + str(self.config_path))
-            exit(0)
-        _config = erik_functions_files.json_load(self.config_path)
-        return _config
-
-    # ToDo dump(save) the json_config with training values
-    def swin_json_dump(self):
-        json.dump(self.c)
-    '''
-
     # create the labelmapping between index and label_class
     def map_labels(self):
         _label2id, _id2label = dict(), dict()
 
-        classes = ['AnnualCrop', 'Forest', 'HerbaceousVegetation', 'Highway', 'Industrial', 'Pasture', 'PermanentCrop',
-                   'Residential', 'River', 'SeaLake']
-        for i, label in enumerate(classes):
+        for i, label in enumerate(self.classes):
             _label2id[label] = i
             _id2label[i] = label
         return _label2id, _id2label
@@ -359,9 +362,9 @@ class SwinTraining:
         self.trainer_swin.save_metrics(_dir_save_model, metrics=self._train_results.metrics)
         self.trainer_swin.save_state()
 
-        metrics = self.trainer_swin.evaluate()
-        self.trainer_swin.log_metrics(_dir_eval, metrics=metrics)
-        self.trainer_swin.save_metrics(_dir_eval, metrics=metrics)
+        eval_metrics = self.trainer_swin.evaluate()
+        self.trainer_swin.log_metrics(_dir_eval, metrics=eval_metrics)
+        self.trainer_swin.save_metrics(_dir_eval, metrics=eval_metrics)
 
         if self.c[c_t.S2_TRAIN_ARGS_PUSH_TO_HUB]:
             self.trainer_swin.push_to_hub()
@@ -374,9 +377,8 @@ class SwinTraining:
         self.training_args_swin.do_train = False
 
         # move confusion matrix pngs to traindir
-        dir_conf_matrix = os.path.join(_dir_save_model, 'figs')
+        #dir_conf_matrix = os.path.join(_dir_save_model, 'figs')
 
         # def copy_files_path(dir_from, dir_save, delete_old=False):
-        erik_functions_files.copy_files_from_dir_to_dir(c_ai_h.DIR_LOCAL_FIGS, dir_conf_matrix,
-                                                        delete_old_src=True, delete_old_save=True)
+        #erik_functions_files.copy_files_from_dir_to_dir(c_ai_h.DIR_LOCAL_FIGS, dir_conf_matrix, delete_old_src=True, delete_old_save=True)
 
