@@ -4,9 +4,9 @@
 
 Install instructions
 ----------------------------------
-conda create -n eurosat python=3.9
+conda create -n eurosat2 python=3.7
 
-conda activate eurosat
+conda activate eurosat2
 conda install pytorch torchvision torchaudio cudatoolkit=11.3 -c pytorch -y
 conda install -c conda-forge opencv -y
 conda install -c huggingface transformers -y
